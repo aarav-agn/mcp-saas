@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String         @id @default(cuid())
+  name           String?
+  email          String         @unique
+  password       String
+  role           String         @default("member") // admin | member | billing
+  createdAt      DateTime       @default(now())
+  // relations
+  memberships    Membership[]
+  sessions       Session[]      // NextAuth sessions (optional)
+  accounts       Account[]      // NextAuth accounts (optional)
+  // convenience: personal tenant created on signup (one-to-one)
+  personalTenant Tenant?        @relation("PersonalTenant", fields: [personalTenantId], references: [id])
+  personalTenantId String?
+}
+
+model Tenant {
+  id                 String         @id @default(cuid())
+  name               String
+  slug               String?        @unique
+  ownerId            String?        // optional owner user id
+  owner              User?          @relation(fields: [ownerId], references: [id])
+  mcpServerId        String?
+  stripeCustomerId   String?        @unique
+  createdAt          DateTime       @default(now())
+  // relations
+  memberships        Membership[]
+  connectors         Connector[]
+  subscriptions      Subscription[]
+  auditLogs          McpAuditLog[]
+}
+
+model Membership {
+  id         String   @id @default(cuid())
+  userId     String
+  tenantId   String
+  role       String   // OWNER | ADMIN | DEVELOPER | VIEWER
+  createdAt  DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([userId, tenantId], name: "user_tenant_unique")
+  @@index([tenantId], name: "idx_membership_tenant")
+}
+
+model Connector {
+  id         String   @id @default(cuid())
+  tenantId   String
+  name       String
+  type       String   // SQL | API | OTHER
+  config     Json?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId], name: "idx_connector_tenant")
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  stripeId           String   @unique
+  subscriptionItemId String?  // stripe subscription item id for metered usage
+  planId             String?  // price id or product id
+  status             String?
+  currentPeriodEnd   DateTime?
+  createdAt          DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId], name: "idx_subscription_tenant")
+}
+
+model Usage {
+  id         String   @id @default(cuid())
+  tenantId   String
+  metric     String
+  value      Int
+  recordedAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  @@index([tenantId], name: "idx_usage_tenant")
+}
+
+model WebhookEvent {
+  id        String   @id @default(cuid())
+  stripeId  String   @unique
+  type      String
+  payload   Json?
+  createdAt DateTime @default(now())
+}
+
+model McpAuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  toolName   String
+  input      Json?
+  output     Json?
+  cost       Int?       // usage units charged
+  createdAt  DateTime   @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  @@index([tenantId], name: "idx_mcp_audit_tenant")
+}
+
+/*
+ * NextAuth-compatible models (optional if you use NextAuth Prisma adapter)
+ * Keep these to use the Prisma adapter without adding them later.
+ */
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @map("refresh_token")
+  access_token       String?  @map("access_token")
+  expires_at         Int?     @map("expires_at")
+  token_type         String?  @map("token_type")
+  scope              String?
+  id_token           String?
+  session_state      String?
+  oauth_token_secret String?
+  oauth_token        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([provider, providerAccountId], name: "account_provider_providerAccountId")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token], name: "verification_token_unique")
+}
